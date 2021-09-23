@@ -11,15 +11,14 @@ library(shiny)
 library(leaflet)
 library(raster)
 library(rgdal)
-library(sf)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 #devtools::install_github("ricardo-bion/ggradar", dependencies = TRUE)
 library(ggradar)
 
-#setwd("~/work/Projects/Adaptive Capacity/Repack-2021/ac")
-setwd("~/srv/shiny-server/AdaptiveCapacity")
+#setwd("~/work/Projects/Adaptive Capacity/Repack-2021/AdaptiveCapacity/")
+setwd("/srv/shiny-server/AdaptiveCapacity")
 
 df <- read.csv("SmoothedDataNorm.csv")
 
@@ -50,56 +49,64 @@ helpText[['physical']]<-"Physical indices";
 helpText[['financial']]<- "Financial indices";
 
 nearestID <- function(longitude, latitude) {
-    mindist = 1E12
-    minRow = -1
     for (i in 1:nrow(df)) {
-        dist <- sqrt(
-            (df$longitude[i] - longitude) * (df$longitude[i] - longitude) +
-            (df$latitude[i] - latitude) * (df$latitude[i] - latitude))
-        if (dist < mindist) { minRow = i ; mindist = dist }
+        if (longitude > df$longitude[i] - 0.2 &&
+            longitude <= df$longitude[i] + 0.2 &&
+            latitude > df$latitude[i] - 0.2 &&
+            latitude <= df$latitude[i] + 0.2 ) {
+            return(i)
+        }
     }
-    return(minRow)
+    return(NULL)
 }
 
-df.sp <-SpatialPointsDataFrame(coords = df[,c(1,2)], data = df[,c(-1,-2)],
-                               proj4string = CRS("+proj=longlat +datum=WGS84"))
-
 # Define UI for application that draws a histogram
-ui <-bootstrapPage(
-    tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
-    leafletOutput("map", width = "100%", height = "100%"),
-    absolutePanel(top = 10, right = 10,
-                  selectInput('measure', 'Measure', names(df)[c(-1, -2)]),
-                  plotOutput('radar'),
-                  plotOutput('bar')),
-    absolutePanel(bottom = 10, left = 10,
-                  textOutput("text"))
-                                                  
-)
+ui <- fluidPage(
+    tabsetPanel(type = "tabs",
+                id = "tab_being_displayed",
+                tabPanel("Home", 
+                         tags$div(HTML("<h3>The vulnerability of Australian rural communities to climate variability and change</h3>
+<p>An app first developed in the '00s to map holistic measures of adaptive capacity across Australia -  imperfectly examining vulnerability through the lens of an impact/hazard modelling approach to risk management
+</p><p>
+The process is described in two papers:,<ul>
+<li><a href=\"https://doi.org/10.1016/j.envsci.2009.09.006\"> Part I—Conceptualising and measuring vulnerability</a>,
+and <li><a href=\"https://doi.org/10.1016/j.envsci.2009.09.007\"> Part II—Integrating impacts with adaptive capacity</a></ul>
+</p><p></p><p>Source code <a href=\"https://github.com/peter-devoil/AdaptiveCapacity\">here</a></p>"))),
+                tabPanel("Map", 
+                         absolutePanel(
+                             top = 40, right = 10, bottom=60, left = 10,
+                             leafletOutput("map", width = "100%", height = "100%")),
+                         absolutePanel(top = 30, right = 10, bottom=70,
+                           selectInput('measure', '', names(df)[c(-1, -2)]),
+                            plotOutput('radar'),
+                            plotOutput('bar')),
+                        absolutePanel(bottom = 5, left = 50, right=50,
+                            htmlOutput("info")))))
 
 # Define server logic required to draw a histogram
 server <- function(input, output) {
+    rv_location <- reactiveValues(id=nearestID(152.3344423210718, -27.554876420264396),
+                                  lat=152.3344423210718,lng=-27.554876420264396)
     
     getRaster <- eventReactive (input$measure, {
         rasterFromXYZ(df[,c("longitude", "latitude", input$measure)], crs=CRS("+proj=longlat +datum=WGS84"))
     })
-    
-    
+
     output$map <-renderLeaflet({
         leaflet() %>%
             addTiles() %>%
-            fitBounds(min(df$longitude), min(df$latitude), max(df$longitude), max(df$latitude))
+            fitBounds(min(df$longitude), min(df$latitude), max(df$longitude), max(df$latitude)) %>%
+            addMarkers(152.3344423210718, -27.554876420264396)
     })
     
     observe({
+        req(input$tab_being_displayed == "Map") 
         pal <- colorBin(c("#ffffcc","#c2e699","#78c679","#31a354","#006837"), c(0,33,50,66, 100),
                         na.color = "transparent")
         leafletProxy("map") %>%
             clearImages() %>%
             addRasterImage(getRaster(), colors = pal, opacity = 0.5)
     })
-    
-    rv_location <- reactiveValues(id=NULL,lat=NULL,lng=NULL)
     
     observeEvent(input$map_click,{
         rv_location$lng <- input$map_click$lng
@@ -113,7 +120,6 @@ server <- function(input, output) {
     output$radar <-renderPlot({
         if (!is.null(rv_location$id)) {
             cell <- cbind(group=1, df[rv_location$id, c("human", "social", "natural", "physical", "financial")])
-        #cell$name <- factor(cell$name, levels=rev(names(df)[c(-1, -2)]))
             g<- ggradar(cell, grid.min = 0, grid.mid = 50, grid.max = 100) 
             return(g)
         }
@@ -139,11 +145,9 @@ server <- function(input, output) {
     })
     
     getText <- eventReactive (input$measure, { return(helpText[[ input$measure ]])})
-                              
-    output$text <- renderText({
+    output$info <- renderText({
         getText()
     })
-
 }
 
 # Run the application 
